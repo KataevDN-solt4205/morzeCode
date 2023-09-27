@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <exception>
 #include <string.h>
+#include <map>
 #include "ICoder.hpp"
 #include "MorzeCoder.hpp"
 
@@ -49,7 +50,12 @@ MorzeCoder::MorzeCoder()
         if (0 != FillCodeFromMorzeStr(simbols[i])){   
             throw std::length_error("Error on fill morze binary codes");
         }
+        codes[simbols[i].code] = &simbols[i];
     }
+    for (auto it: codes) 
+    {
+        printf("%08X %c \n", it.first, it.second->simbol);
+    }  
 }
 
 MorzeCoder::~MorzeCoder()
@@ -61,6 +67,7 @@ int MorzeCoder::Encode(std::string &src, std::vector<uint8_t> &dst)
 {
     uint8_t  dst_byte = 0;				
     uint32_t dst_bit_offset = 0;
+    const simbol_code_t *cur_word_delim = &word_delim;
                     
     simbol_code_t *morze_simbol;
 
@@ -75,22 +82,24 @@ int MorzeCoder::Encode(std::string &src, std::vector<uint8_t> &dst)
             morze_simbol = &simbols[c-'a'];
         }
         else if (c == ' '){
-            EncodeSimbol(letter_to_word_delim, dst, dst_byte, dst_bit_offset);
+            EncodeSimbol(*cur_word_delim, dst, dst_byte, dst_bit_offset);
+            cur_word_delim = &word_delim;
             continue;
         }
         else continue;
 
         EncodeSimbol(*morze_simbol, dst, dst_byte, dst_bit_offset);
         EncodeSimbol(letter_delim, dst, dst_byte, dst_bit_offset);
+        cur_word_delim = &letter_to_word_delim;
     }
-    EncodeSimbol(letter_to_word_delim, dst, dst_byte, dst_bit_offset);
+    EncodeSimbol(*cur_word_delim, dst, dst_byte, dst_bit_offset);
     
     if (dst_bit_offset > 0){
         dst.push_back(dst_byte);
     }
 
     for (uint8_t d: dst){
-        for (int i = 0; i < 8; i++){
+        for (int i = 0; i < bits_in_byte; i++){
             std::cout << (int)((d >> i) & 0b1);
         }
     }
@@ -101,16 +110,49 @@ int MorzeCoder::Encode(std::string &src, std::vector<uint8_t> &dst)
 
 int MorzeCoder::Decode(std::vector<uint8_t> &src, std::string &dst)
 {
-    // for (auto c: src) {
-    // 	c
-    // 	std::cout << num << std::endl;
-    // }
+    uint32_t dst_code   = 0;
+    uint32_t dst_offset = 0;  
+    uint32_t zero_count = 0;
+    for (uint8_t c: src) 
+    {
+        for (int i = 0; i<bits_in_byte; i++ )
+        {
+            if ((c >> i) & 1)
+            {           
+                if (zero_count == letter_delim.code_len){
+                    DecodeSimbol(dst, dst_code, dst_offset);
+                }
+                else if (zero_count >= word_delim.code_len){                    
+                    DecodeSimbol(dst, dst_code, dst_offset);
+                    dst += ' ';
+                }   
+
+                zero_count = 0;                
+                dst_code |=  1 << dst_offset;
+            }
+            else 
+            {
+                zero_count++;
+                if (zero_count >= word_delim.code_len)
+                {
+                    if (dst_code){                        
+                        DecodeSimbol(dst, dst_code, dst_offset);
+                    }                     
+                    dst += ' ';
+                    dst_offset = 0;
+                    zero_count = 0;
+                    continue;
+                }
+            }
+            dst_offset++;
+        }
+    }
     return 0;
 }
 
 int MorzeCoder::FillCodeFromMorzeStr(simbol_code_t &simbol)
 {
-    uint32_t max_pos = sizeof(simbol.code)*8;
+    uint32_t max_pos = sizeof(simbol.code)*bits_in_byte;
     simbol.code     = 0;
     simbol.code_len = 0;
     for (char c: simbol.morze) 
@@ -142,26 +184,36 @@ int MorzeCoder::FillCodeFromMorzeStr(simbol_code_t &simbol)
 
 void MorzeCoder::EncodeSimbol(const simbol_code_t &simbol, std::vector<uint8_t> &dst, uint8_t &dst_byte, uint32_t &dst_bit_offset)
 {
-    const uint32_t bit_in_byte = 8;
-
     uint32_t src_bit_offset = 0;
     uint32_t copy_bit_len   = 0;
 
     /* пока не исчерпаем отправляемый символ */
     while ((simbol.code_len - src_bit_offset) > 0){
 
-        copy_bit_len = std::min(simbol.code_len - src_bit_offset, bit_in_byte - dst_bit_offset);
+        copy_bit_len = std::min(simbol.code_len - src_bit_offset, bits_in_byte - dst_bit_offset);
         dst_byte |= ((simbol.code >> src_bit_offset) << dst_bit_offset) & (((1 << copy_bit_len) - 1) << dst_bit_offset);
         
         src_bit_offset += copy_bit_len;
         dst_bit_offset += copy_bit_len;
 
-        if (dst_bit_offset == bit_in_byte){
+        if (dst_bit_offset == bits_in_byte){
             dst.push_back(dst_byte);
             dst_byte = 0;
             dst_bit_offset = 0;
         }
     }
+}
+
+void MorzeCoder::DecodeSimbol(std::string &dst, uint32_t &dst_code, uint32_t &dst_offset)
+{
+    std::map<uint32_t, simbol_code_t*>::const_iterator pos = codes.find(dst_code);
+    if (pos == codes.end()) {  
+        throw std::runtime_error("Wrong code in morze code");
+    } else {
+        dst += pos->second->simbol;
+    }
+    dst_code   = 0;
+    dst_offset = 0;
 }
 
 void MorzeCoder::ShowSimbol(const simbol_code_t &simbol)
