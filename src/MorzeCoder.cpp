@@ -113,39 +113,46 @@ int MorzeCoder::Decode(std::vector<uint8_t> &src, std::string &dst)
     uint32_t dst_code   = 0;
     uint32_t dst_offset = 0;  
     uint32_t zero_count = 0;
-    for (uint8_t c: src) 
+    try 
     {
-        for (int i = 0; i<bits_in_byte; i++ )
+        for (uint8_t c: src) 
         {
-            if ((c >> i) & 1)
-            {           
-                if (zero_count == letter_delim.code_len){
-                    DecodeSimbol(dst, dst_code, dst_offset);
-                }
-                else if (zero_count >= word_delim.code_len){                    
-                    DecodeSimbol(dst, dst_code, dst_offset);
-                    dst += ' ';
-                }   
-
-                zero_count = 0;                
-                dst_code |=  1 << dst_offset;
-            }
-            else 
+            for (int i = 0; i<bits_in_byte; i++ )
             {
-                zero_count++;
-                if (zero_count >= word_delim.code_len)
-                {
-                    if (dst_code){                        
+                if ((c >> i) & 1)
+                {           
+                    if (zero_count == letter_delim.code_len){
                         DecodeSimbol(dst, dst_code, dst_offset);
-                    }                     
-                    dst += ' ';
-                    dst_offset = 0;
-                    zero_count = 0;
-                    continue;
+                    }
+                    else if (zero_count >= word_delim.code_len){                    
+                        DecodeSimbol(dst, dst_code, dst_offset);
+                        dst += ' ';
+                    }   
+
+                    zero_count = 0;                
+                    dst_code |=  1 << dst_offset;
                 }
+                else 
+                {
+                    zero_count++;
+                    if (zero_count >= word_delim.code_len)
+                    {
+                        if (dst_code){                        
+                            DecodeSimbol(dst, dst_code, dst_offset);
+                        }                     
+                        dst += ' ';
+                        dst_offset = 0;
+                        zero_count = 0;
+                        continue;
+                    }
+                }
+                dst_offset++;
             }
-            dst_offset++;
         }
+    }
+    catch (const std::runtime_error& error)
+    {
+        return -1;
     }
     return 0;
 }
