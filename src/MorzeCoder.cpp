@@ -52,10 +52,10 @@ MorzeCoder::MorzeCoder()
         }
         codes[simbols[i].code] = &simbols[i];
     }
-    for (auto it: codes) 
-    {
-        printf("%08X %c \n", it.first, it.second->simbol);
-    }  
+    // for (auto it: codes) 
+    // {
+    //     printf("%08X %c \n", it.first, it.second->simbol);
+    // }  
 }
 
 MorzeCoder::~MorzeCoder()
