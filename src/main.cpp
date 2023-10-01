@@ -99,7 +99,6 @@ static bool ServerConsoleOnRead(void *ext_data, std::string &instr)
     ctx->use_string.clear();
     ctx->outbuf.clear();
 
-    std::cout << "instr: [" << instr << "]" << std::endl;
     /* may use only small english ascii */
     for(char c: instr){
         if (((c >= 'a') && (c <= 'z')) || (c == ' ')){
@@ -113,7 +112,7 @@ static bool ServerConsoleOnRead(void *ext_data, std::string &instr)
     }
 
     if (ctx->use_string.length()){
-        std::cout << "Encode string: [" << ctx->use_string << "]" << std::endl;
+        std::cout << "Encode string: " << ctx->use_string << std::endl;
         ctx->coder.Encode(instr, ctx->outbuf);
         ctx->coder.EncodeBufToStr(ctx->outbuf, ctx->morze_data);
         std::cout << "Morze data: " << ctx->morze_data << std::endl;
@@ -224,7 +223,7 @@ int main(int argc, char* argv[])
         }
 
         consoleReader.StartRead();
-        consoleReader.WaitTerminate();
+        consoleReader.WaitTerminate();        
         
         server.Close();
         exit(EX_OK);

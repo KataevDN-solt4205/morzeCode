@@ -23,8 +23,9 @@ ServerIPCSocket::ServerIPCSocket()
 }
 
 ServerIPCSocket::~ServerIPCSocket()
-{
-    SocketClose();
+{    
+    SocketClose();    
+    FreeDeletedClient();
 }
 
 int ServerIPCSocket::Open()
@@ -42,19 +43,31 @@ int ServerIPCSocket::Open()
 
 void ServerIPCSocket::SocketClose()
 {
-    std::lock_guard<std::mutex> locker(_lock);
-    /* close and delete all clients */
-    for (ClientIPCSocket *client: clients){
-        delete(client);
-    }
-    clients.clear();
+    /* отключим обратные вызовы иначе встанем в блок  */
+    state_callback_t prev_on_connect = on_connect;
+    state_callback_t prev_on_disconnect = on_disconnect;
+    SetCallback(NULL, NULL);
 
-    /* close server fd */
-    if (socket_fd >= 0)
     {
-        close(socket_fd);
+        std::lock_guard<std::mutex> locker(_lock);
+    
+        /* close and delete all clients */
+        for (ClientIPCSocket *client: clients){
+            client->SetCallbacs(NULL, NULL, NULL);
+            delete(client);
+        }
+        clients.clear();
+
+        /* close server fd */
+        if (socket_fd >= 0)
+        {
+            close(socket_fd);
+        }
+        socket_fd = -1;
     }
-    socket_fd = -1;
+
+     /* восстановим обратные вызовы  */
+    SetCallback(prev_on_connect, prev_on_disconnect);
 }
 
 int ServerIPCSocket::Bind(const std::string sock_path)
@@ -120,14 +133,19 @@ void ServerIPCSocket::OnClientDisconnect(void *ext_data, ClientIPCSocket &client
 {
     ServerIPCSocket *server = (ServerIPCSocket *)ext_data;
     std::lock_guard<std::mutex> locker(server->_lock);
+    ClientIPCSocket *client_ptr = &client;
 
-    std::vector<ClientIPCSocket*>::iterator pos = std::find(server->clients.begin(), server->clients.end(), &client);
+    std::vector<ClientIPCSocket*>::iterator pos = std::find(server->clients.begin(), server->clients.end(), client_ptr);
     if (pos != server->clients.end()){
-        delete(*pos);
         server->clients.erase(pos);
+        
         if (server->on_disconnect){
-            server->on_disconnect(server->ext_data, server->clients.size(), *pos);
+            server->on_disconnect(server->ext_data, server->clients.size(), client_ptr);
         }
+        /* удалить самого себя мы не можем */
+        /* сохраним указатель в список удаления */
+        client_ptr->SetCallbacs(NULL, NULL, NULL);
+        server->deleted_clients.push_back(client_ptr);
     }
 }
          
@@ -158,6 +176,10 @@ void *ServerIPCSocket::AcceptThreadFunction()
             break;
         }
         {
+            if (client_fd == -1){
+               break; 
+            }
+
             std::lock_guard<std::mutex> locker(_lock);
             /* mo then max drop it */
             if (clients.size() >= max_clients){
@@ -175,8 +197,11 @@ void *ServerIPCSocket::AcceptThreadFunction()
             if (on_connect){
                 on_connect(ext_data, clients.size(), new_client);
             }
+            FreeDeletedClient();
+
+            client_fd = -1;
         }
-    }
+    }    
     SocketClose();
     return NULL;
 }
@@ -186,6 +211,15 @@ void *ServerIPCSocket::StaticAcceptThreadFunction(void *_ctx)
     ServerIPCSocket *ctx = (ServerIPCSocket *)_ctx;  
     pthread_exit(ctx->AcceptThreadFunction());
     ctx->accept_thread = (pthread_t)-1;
+}
+
+void ServerIPCSocket::FreeDeletedClient()
+{
+    for (ClientIPCSocket *c: deleted_clients)
+    {
+        c->SetCallbacs(NULL, NULL, NULL);
+        delete(c);
+    }
 }
 
 int ServerIPCSocket::StartAcceptThread(const int _max_clients)
@@ -210,6 +244,7 @@ int ServerIPCSocket::SendAll(std::vector<uint8_t> &buf)
     {
         client->Send(buf);
     }
+    FreeDeletedClient();
 
     return 0;
 }
@@ -221,6 +256,8 @@ void ServerIPCSocket::Close()
 
     if (accept_thread != (pthread_t)-1){
         pthread_kill(accept_thread, SIGUSR1);
+    }
+    if (accept_thread != (pthread_t)-1){
         pthread_join(accept_thread, NULL); 
         accept_thread = -1;
     }

@@ -14,6 +14,7 @@ class ServerIPCSocket
         std::mutex _lock;
         size_t max_clients;
         std::vector<ClientIPCSocket*> clients;
+        std::vector<ClientIPCSocket*> deleted_clients;
      
         void SocketClose();
         int WaitDataForAcceptInfinity(int socket_fd, sigset_t sig_mask);
@@ -25,6 +26,7 @@ class ServerIPCSocket
 
         void *AcceptThreadFunction();
         static void *StaticAcceptThreadFunction(void *ctx); 
+        void FreeDeletedClient();
 
     public:
         typedef std::function<void(void *, int, ClientIPCSocket *)> state_callback_t;

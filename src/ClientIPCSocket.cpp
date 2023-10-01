@@ -51,8 +51,6 @@ void ClientIPCSocket::SocketClose()
     if (socket_fd >= 0)
     {
         close(socket_fd);
-
-        std::lock_guard<std::mutex> locker(_lock);
         if (on_disconnect)
         {
             on_disconnect(ext_data, *this);
@@ -235,7 +233,7 @@ void ClientIPCSocket::Close()
     /* only stop thread disconnect in thread */
     stop_read = true;
 
-    if (read_thread != (pthread_t)-1){
+    if (read_thread != (pthread_t)-1){        
         pthread_kill(read_thread, SIGUSR1);
         pthread_join(read_thread, NULL); 
         read_thread = -1;
