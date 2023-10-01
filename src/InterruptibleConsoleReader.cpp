@@ -54,7 +54,7 @@ void *InterruptibleConsoleReader::ReadThreadFunction()
         rc = WaitDataForReadInfinity(stdin_fd, oldset);
         if (rc >= 0)
         {
-            std::cin >> in_str;
+            std::getline(std::cin, in_str);
             if (on_read)
             {
                 if (on_read(_ext_data, in_str)){
