@@ -125,6 +125,9 @@ void ServerIPCSocket::OnClientDisconnect(void *ext_data, ClientIPCSocket &client
     if (pos != server->clients.end()){
         delete(*pos);
         server->clients.erase(pos);
+        if (server->on_disconnect){
+            server->on_disconnect(server->ext_data, server->clients.size(), *pos);
+        }
     }
 }
          
@@ -151,7 +154,7 @@ void *ServerIPCSocket::AcceptThreadFunction()
     while (!stop_accept)
     {        
         rc = Accept(client_fd, client_sockaddr, oldset);
-        if (rc <= 0){
+        if (rc < 0){
             break;
         }
         {
@@ -169,6 +172,9 @@ void *ServerIPCSocket::AcceptThreadFunction()
             new_client->StartReading();
             /* add */
             clients.push_back(new_client);
+            if (on_connect){
+                on_connect(ext_data, clients.size(), new_client);
+            }
         }
     }
     SocketClose();
@@ -202,7 +208,6 @@ int ServerIPCSocket::SendAll(std::vector<uint8_t> &buf)
 
     for(ClientIPCSocket *client: clients)
     {
-        printf("Send %p %zu\n", client, buf.size());
         client->Send(buf);
     }
 
@@ -223,5 +228,13 @@ void ServerIPCSocket::Close()
 
 void ServerIPCSocket::SetExtData(void *_ext_data)
 {
+    std::lock_guard<std::mutex> locker(_lock);
     ext_data = _ext_data;
+}
+
+void ServerIPCSocket::SetCallback(state_callback_t OnConnect, state_callback_t OnDisconnect)
+{
+    std::lock_guard<std::mutex> locker(_lock);
+    on_connect = OnConnect;
+    on_disconnect = OnDisconnect;
 }

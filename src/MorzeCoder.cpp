@@ -98,13 +98,6 @@ int MorzeCoder::Encode(std::string &src, std::vector<uint8_t> &dst)
         dst.push_back(dst_byte);
     }
 
-    for (uint8_t d: dst){
-        for (int i = 0; i < bits_in_byte; i++){
-            std::cout << (int)((d >> i) & 0b1);
-        }
-    }
-    std::cout << std::endl;
-
     return 0;
 }
 
@@ -112,7 +105,7 @@ int MorzeCoder::Decode(std::vector<uint8_t> &src, std::string &dst)
 {
     uint32_t dst_code   = 0;
     uint32_t dst_offset = 0;  
-    uint32_t zero_count = 0;
+    uint32_t zero_count = 0; 
     try 
     {
         for (uint8_t c: src) 
@@ -127,7 +120,12 @@ int MorzeCoder::Decode(std::vector<uint8_t> &src, std::string &dst)
                     else if (zero_count >= word_delim.code_len){                    
                         DecodeSimbol(dst, dst_code, dst_offset);
                         dst += ' ';
-                    }   
+                    } 
+                    /* если слиплось пару посылок(остаточные нули в байте)*/
+                    /* код должен начинаться с еденицы сбросим сдвиг */
+                    else if ((dst_code == 0) && (dst_offset > 0)){
+                        dst_offset = 0;
+                    }
 
                     zero_count = 0;                
                     dst_code |=  1 << dst_offset;
@@ -155,6 +153,16 @@ int MorzeCoder::Decode(std::vector<uint8_t> &src, std::string &dst)
         return -1;
     }
     return 0;
+}
+
+void MorzeCoder::EncodeBufToStr(std::vector<uint8_t> &buf, std::string &str)
+{
+    str.clear();
+    for (uint8_t d: buf){
+        for (int i = 0; i < bits_in_byte; i++){
+            str += ((d >> i) & 0b1) ? "1" : "0";
+        }
+    }
 }
 
 int MorzeCoder::FillCodeFromMorzeStr(simbol_code_t &simbol)

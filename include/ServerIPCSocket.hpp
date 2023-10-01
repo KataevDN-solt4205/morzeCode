@@ -27,6 +27,13 @@ class ServerIPCSocket
         static void *StaticAcceptThreadFunction(void *ctx); 
 
     public:
+        typedef std::function<void(void *, int, ClientIPCSocket *)> state_callback_t;
+
+    private:
+        state_callback_t on_connect;
+        state_callback_t on_disconnect;
+
+    public:
         ServerIPCSocket();
         ~ServerIPCSocket();
 
@@ -39,6 +46,7 @@ class ServerIPCSocket
 
         void Close();
         void SetExtData(void *_ext_data);
+        void SetCallback(state_callback_t OnConnect, state_callback_t OnDisconnect);
 };
 
 #endif /* __SERVER_IPC_SOCKET_HPP__ */

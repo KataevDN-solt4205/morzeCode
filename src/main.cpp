@@ -19,7 +19,7 @@
 #include "ServerIPCSocket.hpp"
 #include "InterruptibleConsoleReader.hpp"
 
-#define SERVER_PATH "tpf_unix_sock.server"
+#define SERVER_PATH "/tmp/tpf_unix_sock.server"
 
 void usage(const char *app_name)
 {
@@ -38,11 +38,14 @@ static void ClientSocketOnRead(void *ext_data, ClientIPCSocket &csocket, std::ve
 {
     ClientContext *ctx = (ClientContext *)ext_data;
     std::string outstr;
-    int rc = ctx->coder.Decode(buf, outstr);
-    if (rc){
-        return;
+    if (buf.size() > 0)
+    {
+        int rc = ctx->coder.Decode(buf, outstr);
+        if (rc){
+            return;
+        }
+        std::cout << "Recive: " << outstr << std::endl;
     }
-    std::cout << "Recive: " << outstr << std::endl;
 }
 
 static void ClientSocketOnDisconnect(void *ext_data, ClientIPCSocket &csocket)
@@ -69,12 +72,21 @@ typedef struct
     ServerIPCSocket      &server;
     std::vector<uint8_t> &outbuf;
     std::string          &use_string;
+    std::string          &morze_data;
 } ServerContext;
+
+static void ServerOnClientConnect(void *ext_data, int client_count, ClientIPCSocket *client)
+{
+    printf("Connect new client: %p, client count %d\n", client, client_count);
+}
+
+static void ServerOnClientDisconnect(void *ext_data, int client_count, ClientIPCSocket *client)
+{
+    printf("Disconnect client: %p, client count %d\n", client, client_count);
+}
 
 static bool ServerConsoleOnRead(void *ext_data, std::string &instr)
 {
-    std::cout << "ServerConsoleOnRead: " << instr << std::endl;
-
     if ((instr.compare("q") == 0) ||
         (instr.compare("quit") == 0))
     {
@@ -87,18 +99,24 @@ static bool ServerConsoleOnRead(void *ext_data, std::string &instr)
     ctx->use_string.clear();
     ctx->outbuf.clear();
 
+    std::cout << "instr: [" << instr << "]" << std::endl;
     /* may use only small english ascii */
     for(char c: instr){
-        if ((c >= 'a') && (c <= 'z')){
+        if (((c >= 'a') && (c <= 'z')) || (c == ' ')){
             ctx->use_string += c;
+            continue;
         }
-        else if ((c >= 'A') && (c <= 'Z')){
+        if ((c >= 'A') && (c <= 'Z')){
             ctx->use_string += c - 'A' + 'a';
+            continue;
         }
     }
+
     if (ctx->use_string.length()){
-        std::cout << "Encode: " << ctx->use_string << std::endl;
+        std::cout << "Encode string: [" << ctx->use_string << "]" << std::endl;
         ctx->coder.Encode(instr, ctx->outbuf);
+        ctx->coder.EncodeBufToStr(ctx->outbuf, ctx->morze_data);
+        std::cout << "Morze data: " << ctx->morze_data << std::endl;
         if (ctx->outbuf.size())
         {
             ctx->server.SendAll(ctx->outbuf);
@@ -123,7 +141,7 @@ int main(int argc, char* argv[])
     /* is client */
     if (!strncmp(argv[1], "-c", 2))
     {
-        std::cout << "is client" << std::endl;
+        std::cout << "client: for quit send 'q' or 'quit'." << std::endl;
 
         int rc = 0;        
         ClientIPCSocket client_socket; 
@@ -160,14 +178,23 @@ int main(int argc, char* argv[])
  /* is server*/
     if (!strncmp(argv[1], "-s", 2))
     {
-        std::cout << "is server" << std::endl;
+        std::cout << "server: for quit send 'q' or 'quit'." << std::endl;
 
         int rc = 0;
         int max_connections = 5;
+
         ServerIPCSocket server;  
         std::vector<uint8_t> outbuf(1024, 0);
         std::string          use_string(1024, 0);
-        ServerContext ctx = {.coder=coder, .server=server, .outbuf=outbuf, .use_string=use_string};     
+        std::string          morze_data(1024, 0);
+        ServerContext ctx = 
+        {
+            .coder=coder, 
+            .server=server, 
+            .outbuf=outbuf, 
+            .use_string=use_string,
+            .morze_data=morze_data
+        };     
         InterruptibleConsoleReader consoleReader((void*)&ctx, ServerConsoleOnRead, SIGUSR1);
 
         rc = server.Open();
@@ -187,6 +214,8 @@ int main(int argc, char* argv[])
             std::cerr << "LISTEN ERROR: " << gai_strerror(rc) << rc << std::endl;
             exit(EX__BASE);
         }
+
+        server.SetCallback(ServerOnClientConnect, ServerOnClientDisconnect);
 
         rc = server.StartAcceptThread(max_connections);
         if (rc < 0){
