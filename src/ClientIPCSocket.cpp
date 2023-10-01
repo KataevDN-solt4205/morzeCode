@@ -158,7 +158,7 @@ void *ClientIPCSocket::ReadThreadFunction()
     {        
         buf.clear();
         rc = Recive(buf, oldset);
-        if (rc <= 0){
+        if (rc < 0){
             break;
         }
         {
