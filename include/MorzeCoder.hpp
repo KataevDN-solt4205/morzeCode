@@ -8,6 +8,7 @@ class MorzeCoder: public IEncoder, public IDecoder
         virtual ~MorzeCoder();
         int Encode(std::string &src, std::vector<uint8_t> &dst);
         int Decode(std::vector<uint8_t> &src, std::string &dst);
+        void EncodeBufToStr(std::vector<uint8_t> &buf, std::string &str);
 
     private:  
         typedef struct 
