@@ -51,11 +51,7 @@ MorzeCoder::MorzeCoder()
             throw std::length_error("Error on fill morze binary codes");
         }
         codes[simbols[i].code] = &simbols[i];
-    }
-    // for (auto it: codes) 
-    // {
-    //     printf("%08X %c \n", it.first, it.second->simbol);
-    // }  
+    } 
 }
 
 MorzeCoder::~MorzeCoder()
@@ -146,6 +142,9 @@ int MorzeCoder::Decode(std::vector<uint8_t> &src, std::string &dst)
                 }
                 dst_offset++;
             }
+        }
+        if (dst.length() > 1){
+            dst.erase(dst.end()-1);
         }
     }
     catch (const std::runtime_error& error)
