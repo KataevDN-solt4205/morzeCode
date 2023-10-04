@@ -7,6 +7,8 @@ class ServerIPCSocket
         int                socket_fd;
         struct sockaddr_un un_addr;
 
+        const int backlog = 5;
+
         int  thread_interrupt_signal;
         bool stop_accept;
         pthread_t accept_thread;
@@ -41,7 +43,7 @@ class ServerIPCSocket
 
         int  Open();
         int  Bind(const std::string sock_path);
-        int  Listen(const int backlog);
+        int  Listen();
         int  StartAcceptThread(const int max_clients);
 
         int SendAll(std::vector<uint8_t> &buf);

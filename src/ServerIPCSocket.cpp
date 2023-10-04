@@ -85,7 +85,7 @@ int ServerIPCSocket::Bind(const std::string sock_path)
     return 0;
 }
 
-int ServerIPCSocket::Listen(const int backlog)
+int ServerIPCSocket::Listen()
 {
     int rc = listen(socket_fd, backlog);
     if (rc == -1){

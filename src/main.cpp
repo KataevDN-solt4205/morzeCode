@@ -1,4 +1,5 @@
 #include <iostream>
+#include <fstream>
 #include <stdint.h>
 #include <stdio.h>
 #include <vector>
@@ -19,19 +20,22 @@
 #include "ServerIPCSocket.hpp"
 #include "InterruptibleConsoleReader.hpp"
 
-#define SERVER_PATH "/tmp/tpf_unix_sock.server"
+#define SERVER_SOCKET_PATH "/tmp/tpf_unix_sock.server"
+#define SERVER_PID_PATH    "/tmp/tpf_unix_sock.pid"
+#define MAX_CLIENTS        100
 
 void usage(const char *app_name)
 {
-    printf("%s -c / -s\n", app_name);
+    printf("%s -c / -s max_clients\n", app_name);
     printf("\t-c: client\n");
     printf("\t-s: server\n");
+    printf("\tmax_clients: maximum clients that the server can serve (no more than %d)\n", MAX_CLIENTS);
 }
 
 typedef struct 
 {
     InterruptibleConsoleReader &consoleReader;
-    MorzeCoder &coder;
+    IDecoder &decoder;
 } ClientContext;
 
 static void ClientSocketOnRead(void *ext_data, ClientIPCSocket &csocket, std::vector<uint8_t> &buf)
@@ -40,7 +44,7 @@ static void ClientSocketOnRead(void *ext_data, ClientIPCSocket &csocket, std::ve
     std::string outstr;
     if (buf.size() > 0)
     {
-        int rc = ctx->coder.Decode(buf, outstr);
+        int rc = ctx->decoder.Decode(buf, outstr);
         if (rc){
             return;
         }
@@ -68,7 +72,7 @@ static bool ClientConsoleOnRead(void *ext_data, std::string &instr)
 
 typedef struct 
 {
-    MorzeCoder           &coder;
+    IEncoder             &encoder;
     ServerIPCSocket      &server;
     std::vector<uint8_t> &outbuf;
     std::string          &use_string;
@@ -113,8 +117,8 @@ static bool ServerConsoleOnRead(void *ext_data, std::string &instr)
 
     if (ctx->use_string.length()){
         std::cout << "Encode string: " << ctx->use_string << std::endl;
-        ctx->coder.Encode(instr, ctx->outbuf);
-        ctx->coder.EncodeBufToStr(ctx->outbuf, ctx->morze_data);
+        ctx->encoder.Encode(instr, ctx->outbuf);
+        ctx->encoder.EncodeBufToStr(ctx->outbuf, ctx->morze_data);
         std::cout << "Morze data: " << ctx->morze_data << std::endl;
         if (ctx->outbuf.size())
         {
@@ -123,6 +127,33 @@ static bool ServerConsoleOnRead(void *ext_data, std::string &instr)
     }
 
     return false;
+}
+
+bool server_alredy_running(const std::string pid_file_path)
+{
+    pid_t pid;
+    std::ifstream input(pid_file_path);
+
+    if (input.is_open()){
+        input >> pid;
+        /* pid in file exists*/
+        if (pid > 0){
+            /* app terminate*/
+            if ((kill(pid, 0) == -1) && (errno == ESRCH)){          
+                return false; 
+            }
+        }        
+        return true;
+    }
+    return false;
+}
+
+void write_my_pid(const std::string pid_file_path, const pid_t my_pid)
+{
+    std::ofstream output(pid_file_path);
+    if (output.is_open()){
+        output << my_pid;
+    }
 }
 
 int main(int argc, char* argv[])
@@ -142,17 +173,18 @@ int main(int argc, char* argv[])
     {
         std::cout << "client: for quit send 'q' or 'quit'." << std::endl;
 
-        int rc = 0;        
+        int rc = 0;    
+        IDecoder &decoder = dynamic_cast<IDecoder&>(coder);     
         ClientIPCSocket client_socket; 
         InterruptibleConsoleReader consoleReader(NULL, ClientConsoleOnRead, SIGUSR1);
-        ClientContext ctx = {.consoleReader=consoleReader, .coder=coder};
+        ClientContext ctx = {.consoleReader=consoleReader, .decoder=decoder};
 
         rc = client_socket.Open();
         if (rc < 0){
             std::cerr << "OPEN ERROR: " << gai_strerror(rc) << rc << std::endl;
             exit(EX_CANTCREAT);
         }
-        rc = client_socket.Connect(SERVER_PATH);
+        rc = client_socket.Connect(SERVER_SOCKET_PATH);
         if (rc < 0){
             std::cerr << "CONNECT ERROR: " << gai_strerror(rc) << rc << std::endl;
             exit(EX__BASE);
@@ -177,18 +209,35 @@ int main(int argc, char* argv[])
  /* is server*/
     if (!strncmp(argv[1], "-s", 2))
     {
+        if (argc != 3){
+            usage(argv[0]);
+            exit(EX_USAGE);
+        }
+
+        uint32_t max_clients = strtoul(argv[2], NULL, 0);
+        if (max_clients > MAX_CLIENTS){
+            usage(argv[0]);
+            exit(EX_USAGE);
+        }
+
         std::cout << "server: for quit send 'q' or 'quit'." << std::endl;
 
-        int rc = 0;
-        int max_connections = 5;
+        if (server_alredy_running(SERVER_PID_PATH)){
+            std::cout << "server alredy started." << std::endl;
+            exit(EX__BASE);
+        }
+        write_my_pid(SERVER_PID_PATH, getpid());
 
+        int rc = 0;
+
+        IEncoder &encoder = dynamic_cast<IEncoder&>(coder);
         ServerIPCSocket server;  
         std::vector<uint8_t> outbuf(1024, 0);
         std::string          use_string(1024, 0);
         std::string          morze_data(1024, 0);
         ServerContext ctx = 
         {
-            .coder=coder, 
+            .encoder=encoder, 
             .server=server, 
             .outbuf=outbuf, 
             .use_string=use_string,
@@ -202,13 +251,13 @@ int main(int argc, char* argv[])
             exit(EX_CANTCREAT);
         }
 
-        rc = server.Bind(SERVER_PATH);
+        rc = server.Bind(SERVER_SOCKET_PATH);
         if (rc < 0){
             std::cerr << "BIND ERROR: " << gai_strerror(rc) << rc << std::endl;
             exit(EX__BASE);
         }
 
-        rc = server.Listen(max_connections);
+        rc = server.Listen();
         if (rc < 0){
             std::cerr << "LISTEN ERROR: " << gai_strerror(rc) << rc << std::endl;
             exit(EX__BASE);
@@ -216,7 +265,7 @@ int main(int argc, char* argv[])
 
         server.SetCallback(ServerOnClientConnect, ServerOnClientDisconnect);
 
-        rc = server.StartAcceptThread(max_connections);
+        rc = server.StartAcceptThread(max_clients);
         if (rc < 0){
             std::cerr << "ACCEPT ERROR: " << gai_strerror(rc) << rc << std::endl;
             exit(EX__BASE);

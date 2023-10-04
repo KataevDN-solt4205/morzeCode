@@ -5,6 +5,7 @@ class IEncoder
 {
     public:
         virtual int Encode(std::string &src, std::vector<uint8_t> &dst) = 0;
+        virtual void EncodeBufToStr(std::vector<uint8_t> &buf, std::string &str) = 0;
 };
 
 class IDecoder
