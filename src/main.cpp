@@ -32,6 +32,7 @@ void usage(const char *app_name)
     printf("\tmax_clients: maximum clients that the server can serve (no more than %d)\n", MAX_CLIENTS);
 }
 
+/*---------------------------CLIENT-----------------------------*/
 typedef struct 
 {
     InterruptibleConsoleReader &consoleReader;
@@ -69,6 +70,46 @@ static bool ClientConsoleOnRead(void *ext_data, std::string &instr)
     }
     return false;
 }
+
+int client()
+{
+    int rc = 0;    
+    MorzeCoder coder;
+    IDecoder &decoder = (IDecoder&)coder;     
+    ClientIPCSocket client_socket; 
+    InterruptibleConsoleReader consoleReader(NULL, ClientConsoleOnRead, SIGUSR1);
+    ClientContext ctx = {.consoleReader=consoleReader, .decoder=decoder};
+
+    rc = client_socket.Open();
+    if (rc < 0){
+        std::cerr << "OPEN ERROR: " << gai_strerror(rc) << rc << std::endl;
+        return rc;
+    }
+    rc = client_socket.Connect(SERVER_SOCKET_PATH);
+    if (rc < 0){
+        std::cerr << "CONNECT ERROR: " << gai_strerror(rc) << rc << std::endl;
+        return rc;
+    }
+
+    client_socket.SetExtData(&ctx);
+    client_socket.SetCallbacs(NULL, ClientSocketOnDisconnect, ClientSocketOnRead);
+
+    rc = client_socket.StartReading();
+    if (rc < 0){
+        std::cerr << "START READING ERROR: " << gai_strerror(rc) << rc << std::endl;
+        return rc;
+    }
+       
+    std::cout << "client: for quit send 'q' or 'quit'." << std::endl;
+
+    consoleReader.StartRead();
+    consoleReader.WaitTerminate();
+    
+    client_socket.Close();
+    return 0;
+}
+
+/*---------------------------SERVER-----------------------------*/
 
 typedef struct 
 {
@@ -156,57 +197,92 @@ void write_my_pid(const std::string pid_file_path, const pid_t my_pid)
     }
 }
 
+int server(int max_clients)
+{
+    if (max_clients > MAX_CLIENTS){
+        std::cout << "the maximum number of clients cannot be more than " << MAX_CLIENTS << std::endl;
+        return -EINVAL;
+    }
+
+    if (server_alredy_running(SERVER_PID_PATH)){
+        std::cout << "server alredy started." << std::endl;
+        return -EEXIST;
+    }
+    write_my_pid(SERVER_PID_PATH, getpid());
+
+    int rc = 0;
+    MorzeCoder coder;
+    IEncoder &encoder = (IEncoder&)coder;
+    ServerIPCSocket server;  
+    std::vector<uint8_t> outbuf(1024, 0);
+    std::string          use_string(1024, 0);
+    std::string          morze_data(1024, 0);
+    ServerContext ctx = 
+    {
+        .encoder=encoder, 
+        .server=server, 
+        .outbuf=outbuf, 
+        .use_string=use_string,
+        .morze_data=morze_data
+    };     
+    InterruptibleConsoleReader consoleReader((void*)&ctx, ServerConsoleOnRead, SIGUSR1);
+
+    rc = server.Open();
+    if (rc < 0){
+        std::cerr << "OPEN ERROR: " << gai_strerror(rc) << rc << std::endl;
+        return rc;
+    }
+
+    rc = server.Bind(SERVER_SOCKET_PATH);
+    if (rc < 0){
+        std::cerr << "BIND ERROR: " << gai_strerror(rc) << rc << std::endl;
+        return rc;
+    }
+
+    rc = server.Listen();
+    if (rc < 0){
+        std::cerr << "LISTEN ERROR: " << gai_strerror(rc) << rc << std::endl;
+        return rc;
+    }
+
+    server.SetCallback(ServerOnClientConnect, ServerOnClientDisconnect);
+
+    rc = server.StartAcceptThread(max_clients);
+    if (rc < 0){
+        std::cerr << "ACCEPT ERROR: " << gai_strerror(rc) << rc << std::endl;
+        return rc;
+    }
+
+    std::cout << "server: for quit send 'q' or 'quit'." << std::endl;
+
+    consoleReader.StartRead();
+    consoleReader.WaitTerminate();        
+    
+    server.Close();
+    return 0;
+
+}
+
 int main(int argc, char* argv[])
 {
     /* set ANSII locale*/
 	setlocale(LC_ALL, "C");
 
-    if (argc != 2){
+    if (argc < 2){
         usage(argv[0]);
         exit(EX_USAGE);
     }
 
-    MorzeCoder coder;
-
     /* is client */
     if (!strncmp(argv[1], "-c", 2))
     {
-        std::cout << "client: for quit send 'q' or 'quit'." << std::endl;
-
-        int rc = 0;    
-        IDecoder &decoder = dynamic_cast<IDecoder&>(coder);     
-        ClientIPCSocket client_socket; 
-        InterruptibleConsoleReader consoleReader(NULL, ClientConsoleOnRead, SIGUSR1);
-        ClientContext ctx = {.consoleReader=consoleReader, .decoder=decoder};
-
-        rc = client_socket.Open();
-        if (rc < 0){
-            std::cerr << "OPEN ERROR: " << gai_strerror(rc) << rc << std::endl;
-            exit(EX_CANTCREAT);
-        }
-        rc = client_socket.Connect(SERVER_SOCKET_PATH);
-        if (rc < 0){
-            std::cerr << "CONNECT ERROR: " << gai_strerror(rc) << rc << std::endl;
+        if (client()){
             exit(EX__BASE);
         }
-
-        client_socket.SetExtData(&ctx);
-        client_socket.SetCallbacs(NULL, ClientSocketOnDisconnect, ClientSocketOnRead);
-
-        rc = client_socket.StartReading();
-        if (rc < 0){
-            std::cerr << "START READING ERROR: " << gai_strerror(rc) << rc << std::endl;
-            exit(EX__BASE);
-        }
-
-        consoleReader.StartRead();
-        consoleReader.WaitTerminate();
-        
-        client_socket.Close();
         exit(EX_OK);
     } 
 
- /* is server*/
+    /* is server*/
     if (!strncmp(argv[1], "-s", 2))
     {
         if (argc != 3){
@@ -219,62 +295,10 @@ int main(int argc, char* argv[])
             usage(argv[0]);
             exit(EX_USAGE);
         }
-
-        std::cout << "server: for quit send 'q' or 'quit'." << std::endl;
-
-        if (server_alredy_running(SERVER_PID_PATH)){
-            std::cout << "server alredy started." << std::endl;
-            exit(EX__BASE);
-        }
-        write_my_pid(SERVER_PID_PATH, getpid());
-
-        int rc = 0;
-
-        IEncoder &encoder = dynamic_cast<IEncoder&>(coder);
-        ServerIPCSocket server;  
-        std::vector<uint8_t> outbuf(1024, 0);
-        std::string          use_string(1024, 0);
-        std::string          morze_data(1024, 0);
-        ServerContext ctx = 
-        {
-            .encoder=encoder, 
-            .server=server, 
-            .outbuf=outbuf, 
-            .use_string=use_string,
-            .morze_data=morze_data
-        };     
-        InterruptibleConsoleReader consoleReader((void*)&ctx, ServerConsoleOnRead, SIGUSR1);
-
-        rc = server.Open();
-        if (rc < 0){
-            std::cerr << "OPEN ERROR: " << gai_strerror(rc) << rc << std::endl;
-            exit(EX_CANTCREAT);
-        }
-
-        rc = server.Bind(SERVER_SOCKET_PATH);
-        if (rc < 0){
-            std::cerr << "BIND ERROR: " << gai_strerror(rc) << rc << std::endl;
-            exit(EX__BASE);
-        }
-
-        rc = server.Listen();
-        if (rc < 0){
-            std::cerr << "LISTEN ERROR: " << gai_strerror(rc) << rc << std::endl;
-            exit(EX__BASE);
-        }
-
-        server.SetCallback(ServerOnClientConnect, ServerOnClientDisconnect);
-
-        rc = server.StartAcceptThread(max_clients);
-        if (rc < 0){
-            std::cerr << "ACCEPT ERROR: " << gai_strerror(rc) << rc << std::endl;
-            exit(EX__BASE);
-        }
-
-        consoleReader.StartRead();
-        consoleReader.WaitTerminate();        
         
-        server.Close();
+        if (server(max_clients)){
+            exit(EX__BASE);
+        }
         exit(EX_OK);
     }
  
