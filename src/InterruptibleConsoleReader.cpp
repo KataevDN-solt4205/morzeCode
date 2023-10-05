@@ -10,6 +10,7 @@
 #include <netdb.h>
 #include <mutex>
 #include <unistd.h>
+#include <termios.h>
 #include <string>
 #include "InterruptibleConsoleReader.hpp"
 
@@ -48,21 +49,71 @@ void *InterruptibleConsoleReader::ReadThreadFunction()
     signal(_break_signal, InterruptibleConsoleReaderSignalStopper);
     sigprocmask(SIG_BLOCK, &sigset, &oldset);  
 
+    struct termios tp, save;
+
+    /* Retrieve current terminal settings, turn echoing off */
+    if (tcgetattr(STDIN_FILENO, &tp) == -1){
+        return NULL;
+    }
+
+    /* save settings */
+    save = tp;                          /* So we can restore settings later */
+
+    /* ECHO off, other bits unchanged */
+    tp.c_lflag &= ~ECHO;              
+
+    /* Disable canonical mode, and set buffer size to 1 byte */
+    tp.c_lflag &= (~ICANON);
+    tp.c_cc[VTIME] = 0;
+    tp.c_cc[VMIN] = 1;
+
+    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &tp) == -1){
+        return NULL;
+    }
+
     std::string in_str;
+    char c; 
+    bool is_space = true;
     while (!stop_read)
     {
         rc = WaitDataForReadInfinity(stdin_fd, oldset);
         if (rc >= 0)
         {
-            std::getline(std::cin, in_str);
-            if (on_read)
-            {
-                if (on_read(_ext_data, in_str)){
-                    break;
-                }
+            c = getchar();
+            if ((c >= 'a') && (c <= 'z'))
+            {                
+                in_str += c;
+                std::cout << c  << std::flush;
+                is_space = false;
+
             }
-            in_str.clear();
+            /* 1 delim between words */
+            if ((c == ' ') && (is_space == false)){
+                in_str += c;
+                std::cout << c  << std::flush;
+                is_space = true;
+            }
+
+            if ((c == 0x0A)){
+                std::cout << std::endl;
+                is_space = false;
+            }
+
+            if ((c == 0x0A) && (in_str.length() > 0 ))
+            {
+                if (on_read)
+                {
+                    if (on_read(_ext_data, in_str)){
+                        break;
+                    }
+                }
+                in_str.clear();
+                is_space = true;
+            }
         }
+    }
+    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &save) == -1){
+        return NULL;
     }
 
     return NULL;
