@@ -10,34 +10,42 @@
 #include <sys/types.h>
 #include "ICoder.hpp"
 #include "MorzeCoder.hpp"
-#include <catch.hpp>
+#include "catch.hpp"
 
 TEST_CASE("Morze code/decode", "[MorzeCoder]")
 {
     MorzeCoder coder;
-    std::string instr = "abcde fghijklmnop qrstuvwxyz";
+    std::string instr = "abcdefghijklmnopqrstuvwxyz";
     std::string outstr;
     std::vector<uint8_t> encodebuf(128, 0);
+
     int encode_ret = coder.Encode(instr, encodebuf);
     int decode_ret = coder.Decode(encodebuf, outstr);
+
     CHECK(encode_ret == 0);
     CHECK(decode_ret == 0);
     CHECK(instr.compare(outstr) == 0);
 }
 
-TEST_CASE("Morze decode 2 code", "[MorzeCoder]")
+void morze(MorzeCoder &coder, std::string in, std::string &out)
+{
+    out.clear();
+    std::vector<uint8_t> encodebuf(128, 0);
+    coder.Encode(in, encodebuf);
+    coder.Decode(encodebuf, out);
+}
+
+TEST_CASE("Morze decode", "[MorzeDecode]")
 {
     MorzeCoder coder;
-    std::string instr = "abcde fghijklmnop qrstuvwxyz";
     std::string outstr;
-    std::vector<uint8_t> encodebuf(128, 0);
-    int encode_ret = coder.Encode(instr, encodebuf);
-    instr += instr;
-    encodebuf.insert(encodebuf.end(), encodebuf.begin(), encodebuf.end());
-    int decode_ret = coder.Decode(encodebuf, outstr);
-    CHECK(encode_ret == 0);
-    CHECK(decode_ret == 0);
-    CHECK(instr.compare(outstr) == 0);
-}
 
+    morze(coder, "123123  asdfg 234 ", outstr);
+    std::cout << "[" << outstr << "]" <<std::endl;
+    CHECK(0 == outstr.compare("asdfg "));
+
+    morze(coder, "dasdasdaывфывф123123     asdfg 234 ", outstr);
+    std::cout << "[" << outstr << "]" <<std::endl;
+    CHECK(0 == outstr.compare("dasdasd asdfg "));
+}
 

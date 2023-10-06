@@ -14,6 +14,7 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <netdb.h>
+#include <termios.h>
 #include "ICoder.hpp"
 #include "MorzeCoder.hpp"
 #include "ClientIPCSocket.hpp"

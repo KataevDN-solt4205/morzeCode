@@ -1,3 +1,5 @@
+/* при кодировании игнорируются всн символы кроме 'a-z' и пробела */
+
 #include <iostream>
 #include <vector>
 #include <stdint.h>
@@ -76,8 +78,9 @@ int MorzeCoder::Encode(std::string &src, std::vector<uint8_t> &dst)
         }
         else if ((c >= 'a') && (c <= 'z')){
             morze_simbol = &simbols[c-'a'];
-        }
-        else if (c == ' '){
+        }        
+        /* between word 1 delim */
+        else if ((c == ' ') && (cur_word_delim != &word_delim)){
             EncodeSimbol(*cur_word_delim, dst, dst_byte, dst_bit_offset);
             cur_word_delim = &word_delim;
             continue;
@@ -88,7 +91,9 @@ int MorzeCoder::Encode(std::string &src, std::vector<uint8_t> &dst)
         EncodeSimbol(letter_delim, dst, dst_byte, dst_bit_offset);
         cur_word_delim = &letter_to_word_delim;
     }
-    EncodeSimbol(*cur_word_delim, dst, dst_byte, dst_bit_offset);
+    if (cur_word_delim != &word_delim){
+        EncodeSimbol(word_delim, dst, dst_byte, dst_bit_offset);
+    }
     
     if (dst_bit_offset > 0){
         dst.push_back(dst_byte);
@@ -117,11 +122,11 @@ int MorzeCoder::Decode(std::vector<uint8_t> &src, std::string &dst)
                         DecodeSimbol(dst, dst_code, dst_offset);
                         dst += ' ';
                     } 
-                    /* если слиплось пару посылок(остаточные нули в байте)*/
-                    /* код должен начинаться с еденицы сбросим сдвиг */
-                    else if ((dst_code == 0) && (dst_offset > 0)){
-                        dst_offset = 0;
-                    }
+                    // /* если слиплось пару посылок(остаточные нули в байте)*/
+                    // /* код должен начинаться с 1 сбросим сдвиг */
+                    // else if ((dst_code == 0) && (dst_offset > 0)){
+                    //     dst_offset = 0;
+                    // }
 
                     zero_count = 0;                
                     dst_code |=  1 << dst_offset;
@@ -129,16 +134,16 @@ int MorzeCoder::Decode(std::vector<uint8_t> &src, std::string &dst)
                 else 
                 {
                     zero_count++;
-                    if (zero_count >= word_delim.code_len)
-                    {
-                        if (dst_code){                        
-                            DecodeSimbol(dst, dst_code, dst_offset);
-                        }                     
-                        dst += ' ';
-                        dst_offset = 0;
-                        zero_count = 0;
-                        continue;
-                    }
+                    // if (zero_count >= word_delim.code_len)
+                    // {
+                    //     if (dst_code){                        
+                    //         DecodeSimbol(dst, dst_code, dst_offset);
+                    //     }                     
+                    //     dst += ' ';
+                    //     dst_offset = 0;
+                    //     zero_count = 0;
+                    //     continue;
+                    // }
                 }
                 dst_offset++;
             }

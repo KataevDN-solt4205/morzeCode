@@ -17,12 +17,19 @@ APP_OBJ   = $(OBJ_DIR)main.oc
 
 OBJ       = $(filter-out $(APP_OBJ), $(OBJ_TMP))
 
-.PHONY: all clean checkdirs
+.PHONY: all clean checkdirs codeMorze test __test
 
-TARGETS = clean checkdirs codeMorze test 
+TARGETS = clean checkdirs codeMorze 
+TEST_TARGETS = clean checkdirs __test
 
 all:
 	@for t in $(TARGETS); \
+	do \
+		$(MAKE) $$t ; \
+	done
+
+test:
+	@for t in $(TEST_TARGETS); \
 	do \
 		$(MAKE) $$t ; \
 	done
@@ -34,7 +41,7 @@ codeMorze: $(OBJ) $(APP_OBJ)
 $(TST_OBJ):
 	@$(CXX) $(PWD)/test/test_main.cpp -c $(CXXFLAGS) $(INCLUDES) $(LIBS) -o $(TST_OBJ)
 
-test: $(OBJ) $(TST_OBJ) 
+__test: $(OBJ) $(TST_OBJ) 
 	@$(CXX) $(OBJ) $(TST_OBJ) $(CXXFLAGS) $(INCLUDES) $(LIBS) -o $(BIN_DIR)testMorze
 
 checkdirs: 
