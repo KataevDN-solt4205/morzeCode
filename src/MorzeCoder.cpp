@@ -1,4 +1,5 @@
-/* при кодировании игнорируются всн символы кроме 'a-z' и пробела */
+/* при кодировании игнорируются все символы кроме 'a-z' и пробела 
+ * между словами 1 пробел сообщение заканчивается пробелом */
 
 #include <iostream>
 #include <vector>
@@ -70,31 +71,26 @@ int MorzeCoder::Encode(std::string &src, std::vector<uint8_t> &dst)
     simbol_code_t *morze_simbol;
 
     dst.clear();
-
-    for (auto c: src) {                
+    for (auto c: src) {               
         morze_simbol = NULL;
-        if ((c >= 'A') && (c <= 'Z')){
-            morze_simbol = &simbols[c-'A'];
-        }
-        else if ((c >= 'a') && (c <= 'z')){
+        /* encode letter + letter delim*/
+        if ((c >= 'a') && (c <= 'z')){
             morze_simbol = &simbols[c-'a'];
+            EncodeSimbol(*morze_simbol, dst, dst_byte, dst_bit_offset);
+            EncodeSimbol(letter_delim, dst, dst_byte, dst_bit_offset);
+            cur_word_delim = &letter_to_word_delim;
         }        
         /* between word 1 delim */
-        else if ((c == ' ') && (cur_word_delim != &word_delim)){
+        else if ((c == ' ') && (cur_word_delim == &letter_to_word_delim)){
             EncodeSimbol(*cur_word_delim, dst, dst_byte, dst_bit_offset);
             cur_word_delim = &word_delim;
-            continue;
-        }
-        else continue;
-
-        EncodeSimbol(*morze_simbol, dst, dst_byte, dst_bit_offset);
-        EncodeSimbol(letter_delim, dst, dst_byte, dst_bit_offset);
-        cur_word_delim = &letter_to_word_delim;
+        }        
+    } 
+    /* if last is ' ' do nothing else add ' '*/
+    if (cur_word_delim == &letter_to_word_delim){
+        EncodeSimbol(*cur_word_delim, dst, dst_byte, dst_bit_offset);
     }
-    if (cur_word_delim != &word_delim){
-        EncodeSimbol(word_delim, dst, dst_byte, dst_bit_offset);
-    }
-    
+    /* if data in byte add byte */
     if (dst_bit_offset > 0){
         dst.push_back(dst_byte);
     }
@@ -107,6 +103,7 @@ int MorzeCoder::Decode(std::vector<uint8_t> &src, std::string &dst)
     uint32_t dst_code   = 0;
     uint32_t dst_offset = 0;  
     uint32_t zero_count = 0; 
+    dst.clear();
     try 
     {
         for (uint8_t c: src) 
@@ -118,15 +115,10 @@ int MorzeCoder::Decode(std::vector<uint8_t> &src, std::string &dst)
                     if (zero_count == letter_delim.code_len){
                         DecodeSimbol(dst, dst_code, dst_offset);
                     }
-                    else if (zero_count >= word_delim.code_len){                    
+                    else if (zero_count == word_delim.code_len){                    
                         DecodeSimbol(dst, dst_code, dst_offset);
                         dst += ' ';
                     } 
-                    // /* если слиплось пару посылок(остаточные нули в байте)*/
-                    // /* код должен начинаться с 1 сбросим сдвиг */
-                    // else if ((dst_code == 0) && (dst_offset > 0)){
-                    //     dst_offset = 0;
-                    // }
 
                     zero_count = 0;                
                     dst_code |=  1 << dst_offset;
@@ -134,22 +126,22 @@ int MorzeCoder::Decode(std::vector<uint8_t> &src, std::string &dst)
                 else 
                 {
                     zero_count++;
-                    // if (zero_count >= word_delim.code_len)
-                    // {
-                    //     if (dst_code){                        
-                    //         DecodeSimbol(dst, dst_code, dst_offset);
-                    //     }                     
-                    //     dst += ' ';
-                    //     dst_offset = 0;
-                    //     zero_count = 0;
-                    //     continue;
-                    // }
+                    if (zero_count > word_delim.code_len){
+                        zero_count = word_delim.code_len;
+                    }
                 }
                 dst_offset++;
             }
         }
-        if (dst.length() > 1){
-            dst.erase(dst.end()-1);
+        if (zero_count >= letter_delim.code_len)
+        {
+            if (zero_count == letter_delim.code_len){
+                DecodeSimbol(dst, dst_code, dst_offset);
+            }
+            else if (zero_count == word_delim.code_len){                    
+                DecodeSimbol(dst, dst_code, dst_offset);
+                dst += ' ';
+            } 
         }
     }
     catch (const std::runtime_error& error)
