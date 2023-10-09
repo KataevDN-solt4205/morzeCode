@@ -291,7 +291,7 @@ int main(int argc, char* argv[])
         }
 
         uint32_t max_clients = strtoul(argv[2], NULL, 0);
-        if (max_clients > MAX_CLIENTS){
+        if ((max_clients > MAX_CLIENTS) || (max_clients < 1)){
             usage(argv[0]);
             exit(EX_USAGE);
         }
