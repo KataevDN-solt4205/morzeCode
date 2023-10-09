@@ -10,9 +10,8 @@
 #include <iostream>
 #include "BasicReadBufferSupervisor.hpp"
 
-BasicReadBufferSupervisor::BasicReadBufferSupervisor(int break_signal)
+BasicReadBufferSupervisor::BasicReadBufferSupervisor()
     :fd(-1),
-    thread_interrupt_signal(break_signal),
     is_running(false)
 {
 
@@ -22,14 +21,15 @@ BasicReadBufferSupervisor::~BasicReadBufferSupervisor()
 {
 }
 
-int  BasicReadBufferSupervisor::WaitDataInReadBufInfinity(sigset_t *oldset)
+int  BasicReadBufferSupervisor::WaitDataInReadBuf(size_t sec, size_t usec)
 {
     fd_set readfds;
+    struct timeval tv = {.tv_sec=0, .tv_usec=0};
        
     FD_ZERO(&readfds);
     FD_SET(fd, &readfds);
 
-    int rc = pselect(fd+1, &readfds, NULL, NULL, NULL, oldset);
+    int rc = select(fd+1, &readfds, NULL, NULL, &tv);
     return rc;
 }
 
@@ -76,30 +76,23 @@ void *BasicReadBufferSupervisor::ThreadFunction()
         std::lock_guard<std::mutex> Lock(thread_lock);
         is_running = true;
     } 
-    
-    sigset_t sigset;
-    sigemptyset(&sigset);
-    sigemptyset(&oldset);    
-    sigaddset(&sigset, thread_interrupt_signal );
-    signal(thread_interrupt_signal, SignalStopper);
-    sigprocmask(SIG_BLOCK, &sigset, &oldset); 
 
     if (BeforeThreadLoop()){
         stop_thread = true;
     }
-      
-    std::cout << "START "<< pthread_self() << std::endl;  
-    int data_exists = WaitDataInReadBufInfinity(&oldset);  
-    std::cout << "first wait exit"<< this << std::endl;
-    while ((stop_thread == false) && (data_exists >= 0))
-    {      
-        if (ExistDataInReadBuffer()){
-            break;
+
+    int data_exists; 
+    do 
+    {
+        data_exists = WaitDataInReadBuf(check_delay_in_sec, check_delay_in_usec); 
+        if (data_exists > 0)
+        {
+            if (ExistDataInReadBuffer()){
+                break;
+            }
         }
-        data_exists = WaitDataInReadBufInfinity(&oldset);
-        std::cout << "second wait exit"<< this << std::endl;
     }
-    
+    while ((stop_thread == false) && (data_exists >= 0));
  
     {
         std::lock_guard<std::mutex> Lock(thread_lock);
@@ -107,7 +100,6 @@ void *BasicReadBufferSupervisor::ThreadFunction()
     }
 
     AfterThreadLoop();
-    // sigprocmask(SIG_UNBLOCK, &sigset, NULL);
 
     return NULL; 
 }  
@@ -143,16 +135,6 @@ int BasicReadBufferSupervisor::Start()
 void BasicReadBufferSupervisor::Stop()
 {
     stop_thread = true;    
-    bool local_is_running;
-    {
-        std::cout << " Stop before thread lock"<< this  << " + " << thread <<std::endl;
-        // std::lock_guard<std::mutex> Lock(thread_lock);  
-        local_is_running = is_running;
-    }    
-    std::cout << "Stop after thread lock"<< this << " + " << is_running  << " + " << local_is_running << " + " << thread_interrupt_signal << std::endl;
-    if (local_is_running){                     
-        pthread_kill(thread, thread_interrupt_signal);
-    }
 }
 
 void BasicReadBufferSupervisor::Join()

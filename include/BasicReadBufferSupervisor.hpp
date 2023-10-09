@@ -5,15 +5,15 @@ class BasicReadBufferSupervisor
 {
     protected:
         int fd;
-        int  thread_interrupt_signal;
         bool stop_thread;
         pthread_t thread;
         std::mutex thread_lock;
         bool is_running;
-        sigset_t oldset;
+        const size_t check_delay_in_sec = 0;
+        const size_t check_delay_in_usec = 500;
 
     protected:
-        int WaitDataInReadBufInfinity(sigset_t *oldset);
+        int WaitDataInReadBuf(size_t sec, size_t usec);
         int DataInReadBufExists();
 
         /* if ret != 0 thread terminate */
@@ -28,7 +28,7 @@ class BasicReadBufferSupervisor
         void *ThreadFunction();
 
     public:
-        BasicReadBufferSupervisor(int break_signal);
+        BasicReadBufferSupervisor();
         virtual ~BasicReadBufferSupervisor();
 
         int  Start();
