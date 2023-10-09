@@ -17,7 +17,7 @@
 #include "ServerIPCSocket.hpp"
 
 ServerIPCSocket::ServerIPCSocket(void *_ext_data, state_callback_t OnConnect, state_callback_t OnDisconnect)
-    :BasicReadBufferSupervisor(SIGUSR1),
+    :BasicReadBufferSupervisor(),
     ext_data(_ext_data),
     on_connect(OnConnect),
     on_disconnect(OnDisconnect)
@@ -52,12 +52,17 @@ void ServerIPCSocket::Close()
         Join();
     }
 
+    /* stop all clients */
     for (ClientIPCSocket *client: clients){
-        std::cout << "On Close delete 0"<< client << std::endl;
+        /* disable move client to deleted list*/
+        client->SetOnDisconnectCallback(NULL);
         client->Stop();
-        std::cout << "On Close delete 1"<< client << std::endl;
+    }
+
+    /* delete all clients */
+    for (ClientIPCSocket *client: clients){
+        client->Join();
         delete(client);
-        std::cout << "On Close delete 2"<< client << std::endl;
     }
     clients.clear();
 
@@ -71,14 +76,14 @@ void ServerIPCSocket::Close()
     fd = -1;
 }
 
-int ServerIPCSocket::Bind(const std::string sock_path)
+int ServerIPCSocket::Bind(const std::string uri)
 {
     struct sockaddr_un un_addr;
     un_addr.sun_family = AF_UNIX;   
-    strcpy(un_addr.sun_path, sock_path.c_str()); 
+    strcpy(un_addr.sun_path, uri.c_str()); 
     socklen_t len = sizeof(un_addr);
     
-    unlink(sock_path.c_str());
+    unlink(uri.c_str());
     int rc = bind(fd, (struct sockaddr *) &un_addr, len);
     if (rc == -1){
         Close();
@@ -114,7 +119,6 @@ void ServerIPCSocket::FreeDeletedClient()
 {
     std::lock_guard<std::mutex> locker(list_lock);
     for (ClientIPCSocket *c: deleted_clients){
-        std::cout << "FreeDeletedClient delete "<< c << std::endl; 
         delete(c);
     }
     deleted_clients.clear();
@@ -134,9 +138,7 @@ void ServerIPCSocket::OnClientDisconnect(void *ext_data, ClientIPCSocket &client
             server->on_disconnect(server->ext_data, server->clients.size(), client_ptr);
         }
         /* удалить самого себя мы не можем */
-        /* сохраним указатель в список удаления */
-        
-        std::cout << "on disconnect add "<< client_ptr << std::endl; 
+        /* сохраним указатель в список удаления */ 
         server->deleted_clients.push_back(client_ptr);
     }
 }
@@ -151,6 +153,7 @@ int ServerIPCSocket::ExistDataInReadBuffer()
         /* mo then max drop it */
         if (clients.size() >= max_clients){
             close(client_fd);
+            return rc;
         }
         
         /* create client */

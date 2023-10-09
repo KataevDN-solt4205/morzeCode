@@ -26,7 +26,7 @@ class ServerIPCSocket: public BasicReadBufferSupervisor
 
         int  Open();
         void Close();
-        int  Bind(const std::string sock_path);
+        int  Bind(const std::string uri);
         int  Listen(size_t _max_clients);
 
         int Send(std::vector<uint8_t> &buf);

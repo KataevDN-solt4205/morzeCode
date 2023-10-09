@@ -16,7 +16,7 @@
 #include "InterruptibleConsoleReader.hpp"
 
 InterruptibleConsoleReader::InterruptibleConsoleReader(void *ext_data, read_callback_t OnRead) 
-    :BasicReadBufferSupervisor(SIGUSR1),
+    :BasicReadBufferSupervisor(),
     _ext_data(ext_data),
     on_read(OnRead)
 {

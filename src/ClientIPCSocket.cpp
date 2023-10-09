@@ -17,7 +17,7 @@
 
 ClientIPCSocket::ClientIPCSocket(void *_ext_data, 
     state_callback_t OnConnect, state_callback_t OnDisconnect, read_callback_t OnRead)       
-    :BasicReadBufferSupervisor(SIGUSR1)
+    :BasicReadBufferSupervisor()
 {
     read_buf.clear();
     read_buf.reserve(256);
@@ -31,7 +31,7 @@ ClientIPCSocket::ClientIPCSocket(void *_ext_data,
 
 ClientIPCSocket::ClientIPCSocket(int fd, void *_ext_data, 
     state_callback_t OnConnect, state_callback_t OnDisconnect, read_callback_t OnRead)       
-    :BasicReadBufferSupervisor(SIGUSR1)
+    :BasicReadBufferSupervisor()
 {
     read_buf.clear();
     read_buf.reserve(256);
@@ -46,9 +46,7 @@ ClientIPCSocket::ClientIPCSocket(int fd, void *_ext_data,
 
 ClientIPCSocket::~ClientIPCSocket()
 {
-    std::cout << "~ClientIPCSocket 0"<< this << std::endl; 
     Close();
-    std::cout << "~ClientIPCSocket 1"<< this << std::endl;
 }
 
 void ClientIPCSocket::SetExtData(void *_ext_data)
@@ -105,24 +103,18 @@ int  ClientIPCSocket::Open()
 
 void ClientIPCSocket::Close()
 {
+    if (IsRunning())
+    {
+        Stop();
+        Join();
+    }
     if (fd >= 0){
         close(fd);
     }
     fd = -1;
-    std::cout << " Close 0"<< this << std::endl;
-    if (IsRunning())
-    {
-        std::cout << " Close is running "<< this << std::endl;
-        Stop();
-        std::cout << " Close after stop"<< this << std::endl;
-        Join();
-        std::cout << " Close after join"<< this << std::endl;
-    }
-
-
 }
 
-int  ClientIPCSocket::Connect(const std::string sock_path)
+int  ClientIPCSocket::Connect(const std::string uri)
 {
     struct sockaddr_un un_addr;
     if (fd == -1){
@@ -130,13 +122,13 @@ int  ClientIPCSocket::Connect(const std::string sock_path)
     }
 
     size_t max_path = (sizeof(un_addr) - sizeof(un_addr.sun_family));
-    if (sock_path.length() >= max_path){
+    if (uri.length() >= max_path){
         return -EINVAL;
     }
 
     un_addr.sun_family = AF_UNIX;
-    strcpy(un_addr.sun_path, sock_path.c_str());
-    size_t len = sizeof(un_addr.sun_family) + sock_path.length(); 
+    strcpy(un_addr.sun_path, uri.c_str());
+    size_t len = sizeof(un_addr.sun_family) + uri.length(); 
 
     if(connect(fd, (struct sockaddr *) &un_addr, len) == -1){
         Close();
@@ -156,7 +148,6 @@ int ClientIPCSocket::BeforeThreadLoop()
 
 int ClientIPCSocket::ExistDataInReadBuffer()
 {
-    std::cout << "ExistDataInReadBuffer enter " << std::endl;
     int rc;
     do 
     {
@@ -184,17 +175,13 @@ int ClientIPCSocket::ExistDataInReadBuffer()
             read_buf.clear();
             break;
         }
-
-        std::cout << "ExistDataInReadBuffer iter " << std::endl;
     }
     while ((stop_thread == false) && (DataInReadBufExists() >= 0));
-    std::cout << "ExistDataInReadBuffer exit " << std::endl;
     return 0;
 }
 
 void ClientIPCSocket::AfterThreadLoop()
 {
-    std::cout << "AfterThreadLoop " << std::endl;
     std::lock_guard<std::mutex> locker(ext_data_and_callbaks_lock);
     if (on_disconnect){
         on_disconnect(ext_data, *this);

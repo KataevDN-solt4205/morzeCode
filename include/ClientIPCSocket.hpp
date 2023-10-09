@@ -37,7 +37,7 @@ class ClientIPCSocket : public BasicReadBufferSupervisor
 
         int  Open();
         void Close();
-        int  Connect(const std::string sock_path);
+        int  Connect(const std::string uri);
 
     private:
         int BeforeThreadLoop();
