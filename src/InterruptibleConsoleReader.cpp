@@ -12,52 +12,27 @@
 #include <unistd.h>
 #include <termios.h>
 #include <string>
+#include "BasicReadBufferSupervisor.hpp"
 #include "InterruptibleConsoleReader.hpp"
 
-InterruptibleConsoleReader::InterruptibleConsoleReader(void *ext_data, read_callback_t OnRead, int break_signal) 
-    :_ext_data(ext_data),
-    on_read(OnRead),
-    read_thread(-1),
-    _break_signal(break_signal)
+InterruptibleConsoleReader::InterruptibleConsoleReader(void *ext_data, read_callback_t OnRead) 
+    :BasicReadBufferSupervisor(SIGUSR1),
+    _ext_data(ext_data),
+    on_read(OnRead)
 {
 }
 
-int InterruptibleConsoleReader::WaitDataForReadInfinity(int socket_fd, sigset_t sig_mask)
+int InterruptibleConsoleReader::BeforeThreadLoop()
 {
-    fd_set readfds;
-    
-    FD_ZERO(&readfds);
-    FD_SET(socket_fd, &readfds);
-
-    int rc = pselect(socket_fd+1, &readfds, NULL, NULL, NULL, &sig_mask);
-    return rc;
-}
-
-void InterruptibleConsoleReader::InterruptibleConsoleReaderSignalStopper(int signo)
-{
-    (void)signo;
-}
-
-void *InterruptibleConsoleReader::ReadThreadFunction()
-{
-    int rc = 0;
-
-    sigset_t sigset, oldset;
-    sigemptyset(&sigset);
-    sigemptyset(&oldset);    
-    sigaddset(&sigset, _break_signal );
-    signal(_break_signal, InterruptibleConsoleReaderSignalStopper);
-    sigprocmask(SIG_BLOCK, &sigset, &oldset);  
-
-    struct termios tp, save;
+    struct termios tp;
 
     /* Retrieve current terminal settings, turn echoing off */
-    if (tcgetattr(STDIN_FILENO, &tp) == -1){
-        return NULL;
+    if (tcgetattr(fd, &tp) == -1){
+        return -errno;
     }
 
     /* save settings */
-    save = tp;                          /* So we can restore settings later */
+    termios_old = tp;                         
 
     /* ECHO off, other bits unchanged */
     tp.c_lflag &= ~ECHO;              
@@ -67,90 +42,54 @@ void *InterruptibleConsoleReader::ReadThreadFunction()
     tp.c_cc[VTIME] = 0;
     tp.c_cc[VMIN] = 1;
 
-    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &tp) == -1){
-        return NULL;
+    if (tcsetattr(fd, TCSAFLUSH, &tp) == -1){
+        return -errno;
     }
 
-    std::string in_str;
-    char c; 
-    bool is_space = true;
-    while (!stop_read)
+    return 0;
+}
+
+int InterruptibleConsoleReader::ExistDataInReadBuffer()
+{
+    char c = getchar();   
+
+    if ((c >= 'a') && (c <= 'z'))
+    {                
+        in_str += c;
+        std::cout << c  << std::flush;
+        is_space = false;
+
+    }
+    /* 1 delim between words */
+    if ((c == ' ') && (is_space == false)){
+        in_str += c;
+        std::cout << c  << std::flush;
+        is_space = true;
+    }
+
+    if ((c == 0x0A)){
+        std::cout << std::endl;
+        is_space = false;
+    }
+
+    if ((c == 0x0A) && (in_str.length() > 0 ))
     {
-        rc = WaitDataForReadInfinity(stdin_fd, oldset);
-        if (rc >= 0)
+        if (on_read)
         {
-            c = getchar();
-            if ((c >= 'a') && (c <= 'z'))
-            {                
-                in_str += c;
-                std::cout << c  << std::flush;
-                is_space = false;
-
-            }
-            /* 1 delim between words */
-            if ((c == ' ') && (is_space == false)){
-                in_str += c;
-                std::cout << c  << std::flush;
-                is_space = true;
-            }
-
-            if ((c == 0x0A)){
-                std::cout << std::endl;
-                is_space = false;
-            }
-
-            if ((c == 0x0A) && (in_str.length() > 0 ))
-            {
-                if (on_read)
-                {
-                    if (on_read(_ext_data, in_str)){
-                        break;
-                    }
-                }
-                in_str.clear();
-                is_space = true;
+            if (on_read(_ext_data, in_str)){
+                return -1;
             }
         }
-    }
-    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &save) == -1){
-        return NULL;
+        in_str.clear();
+        is_space = false;
     }
 
-    return NULL;
+    return 0;
 }
 
-void *InterruptibleConsoleReader::StaticReadThreadFunction(void *_ctx)
+void InterruptibleConsoleReader::AfterThreadLoop()
 {
-    InterruptibleConsoleReader *ctx = (InterruptibleConsoleReader *)_ctx;  
-    pthread_exit(ctx->ReadThreadFunction());
-    // ctx->read_thread = (pthread_t)-1;
+    tcsetattr(fd, TCSAFLUSH, &termios_old);
 }
 
-int InterruptibleConsoleReader::StartRead()
-{
-    if (read_thread != (pthread_t)-1){
-        return -EEXIST;
-    }
-
-    stdin_fd = fileno(stdin);
-    stop_read = false;
-    return pthread_create(&read_thread, NULL, &StaticReadThreadFunction, this);
-}
-
-void InterruptibleConsoleReader::StopRead()
-{
-    /* only stop thread disconnect in thread */
-    stop_read = true;
-
-    if (read_thread != (pthread_t)-1){
-        pthread_kill(read_thread, _break_signal); 
-    }
-}
-
-void InterruptibleConsoleReader::WaitTerminate()
-{
-    if (read_thread != (pthread_t)-1){
-        pthread_join(read_thread, NULL); 
-    }
-}
 

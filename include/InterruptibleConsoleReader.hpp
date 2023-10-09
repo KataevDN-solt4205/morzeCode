@@ -1,7 +1,7 @@
 #ifndef __INTERRUPTIBLE_CONSOLE_READER_HPP__
 #define __INTERRUPTIBLE_CONSOLE_READER_HPP__
 
-class InterruptibleConsoleReader
+class InterruptibleConsoleReader : public BasicReadBufferSupervisor
 {
     public:
         typedef std::function<bool(void *, std::string &)> read_callback_t;
@@ -9,24 +9,17 @@ class InterruptibleConsoleReader
     private:
         void *_ext_data;
         read_callback_t on_read;
+        struct termios termios_old;
+        std::string in_str;
+        bool is_space;
 
-        bool stop_read;
-        pthread_t read_thread;
-        int _break_signal;
-        int stdin_fd;
-
-        int WaitDataForReadInfinity(int socket_fd, sigset_t sig_mask);
-
-        void *ReadThreadFunction();
-        static void InterruptibleConsoleReaderSignalStopper(int signo);
-        static void *StaticReadThreadFunction(void *_ctx);
+        int  BeforeThreadLoop();
+        int  ExistDataInReadBuffer();
+        void AfterThreadLoop();
 
     public:
         /* OnRead if return false then terminate */
-        InterruptibleConsoleReader(void *ext_data, read_callback_t OnRead, int break_signal);
-        int StartRead();
-        void StopRead();
-        void WaitTerminate();
+        InterruptibleConsoleReader(void *ext_data, read_callback_t OnRead);
 };
 
 #endif /* __INTERRUPTIBLE_CONSOLE_READER_HPP__ */
