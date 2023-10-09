@@ -97,17 +97,18 @@ int client()
         std::cerr << "CONNECT ERROR: " << gai_strerror(rc) << rc << std::endl;
         return rc;
     }
-
-    rc = client_socket.Start();
-    if (rc < 0){
-        std::cerr << "START READING ERROR: " << gai_strerror(rc) << rc << std::endl;
-        return rc;
-    }
        
     std::cout << "client: for quit send 'q' or 'quit'." << std::endl;
 
     consoleReader.Attach(STDIN_FILENO);
     consoleReader.Start();
+
+    /*client socket start after console reader for stop console Reader on disconnect */
+    rc = client_socket.Start();
+    if (rc < 0){
+        std::cerr << "START READING ERROR: " << gai_strerror(rc) << rc << std::endl;
+        return rc;
+    }
     consoleReader.Join(); 
      
     client_socket.Stop();
@@ -255,12 +256,9 @@ int server(int max_clients)
         return rc;
     } 
     consoleReader.Join();  
-
-    std::cout << "stop server" << std::endl;   
     
     server.Stop();
-    server.Join();
-    std::cout << "close server" << std::endl;   
+    server.Join(); 
     server.Close();
     return 0;
 }
