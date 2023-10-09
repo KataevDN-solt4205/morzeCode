@@ -2,6 +2,7 @@
 #include <fstream>
 #include <stdint.h>
 #include <stdio.h>
+#include <unistd.h>
 #include <vector>
 #include <map>
 #include <cstring>
@@ -17,6 +18,7 @@
 #include <termios.h>
 #include "ICoder.hpp"
 #include "MorzeCoder.hpp"
+#include "BasicReadBufferSupervisor.hpp"
 #include "ClientIPCSocket.hpp"
 #include "ServerIPCSocket.hpp"
 #include "InterruptibleConsoleReader.hpp"
@@ -57,7 +59,7 @@ static void ClientSocketOnRead(void *ext_data, ClientIPCSocket &csocket, std::ve
 static void ClientSocketOnDisconnect(void *ext_data, ClientIPCSocket &csocket)
 {
     ClientContext *ctx = (ClientContext *)ext_data;  
-    ctx->consoleReader.StopRead();
+    ctx->consoleReader.Stop();
     std::cout << "Disconnect." << std::endl;
 }
 
@@ -77,25 +79,26 @@ int client()
     int rc = 0;    
     MorzeCoder coder;
     IDecoder &decoder = (IDecoder&)coder;     
-    ClientIPCSocket client_socket; 
-    InterruptibleConsoleReader consoleReader(NULL, ClientConsoleOnRead, SIGUSR1);
+    InterruptibleConsoleReader consoleReader(NULL, ClientConsoleOnRead);
     ClientContext ctx = {.consoleReader=consoleReader, .decoder=decoder};
+    ClientIPCSocket client_socket((void *)&ctx, NULL, ClientSocketOnDisconnect, ClientSocketOnRead); 
 
     rc = client_socket.Open();
     if (rc < 0){
-        std::cerr << "OPEN ERROR: " << gai_strerror(rc) << rc << std::endl;
+        std::cerr << "OPEN ERROR: " << strerror(rc) << rc << std::endl;
         return rc;
     }
     rc = client_socket.Connect(SERVER_SOCKET_PATH);
     if (rc < 0){
+        if (rc == -EINPROGRESS){
+            std::cerr << "OPEN ERROR: Connection refused " << std::endl;
+            return rc;
+        }
         std::cerr << "CONNECT ERROR: " << gai_strerror(rc) << rc << std::endl;
         return rc;
     }
 
-    client_socket.SetExtData(&ctx);
-    client_socket.SetCallbacs(NULL, ClientSocketOnDisconnect, ClientSocketOnRead);
-
-    rc = client_socket.StartReading();
+    rc = client_socket.Start();
     if (rc < 0){
         std::cerr << "START READING ERROR: " << gai_strerror(rc) << rc << std::endl;
         return rc;
@@ -103,9 +106,12 @@ int client()
        
     std::cout << "client: for quit send 'q' or 'quit'." << std::endl;
 
-    consoleReader.StartRead();
-    consoleReader.WaitTerminate();
-    
+    consoleReader.Attach(STDIN_FILENO);
+    consoleReader.Start();
+    consoleReader.Join(); 
+     
+    client_socket.Stop();
+    client_socket.Join(); 
     client_socket.Close();
     return 0;
 }
@@ -136,35 +142,22 @@ static bool ServerConsoleOnRead(void *ext_data, std::string &instr)
     if ((instr.compare("q") == 0) ||
         (instr.compare("quit") == 0))
     {
-        std::cout << "quit" << std::endl;
+        std::cout << "quit" << std::endl << std::flush;
         return true;
     }
 
     ServerContext *ctx = (ServerContext *)ext_data;
 
-    ctx->use_string.clear();
     ctx->outbuf.clear();
 
-    /* may use only small english ascii */
-    for(char c: instr){
-        if (((c >= 'a') && (c <= 'z')) || (c == ' ')){
-            ctx->use_string += c;
-            continue;
-        }
-        if ((c >= 'A') && (c <= 'Z')){
-            ctx->use_string += c - 'A' + 'a';
-            continue;
-        }
-    }
-
-    if (ctx->use_string.length()){
-        std::cout << "Encode string: " << ctx->use_string << std::endl;
+    if (instr.length()){
+        std::cout << "Encode string: " << instr << std::endl;
         ctx->encoder.Encode(instr, ctx->outbuf);
         ctx->encoder.EncodeBufToStr(ctx->outbuf, ctx->morze_data);
         std::cout << "Morze data: " << ctx->morze_data << std::endl;
         if (ctx->outbuf.size())
         {
-            ctx->server.SendAll(ctx->outbuf);
+            ctx->server.Send(ctx->outbuf);
         }
     }
 
@@ -214,10 +207,10 @@ int server(int max_clients)
     int rc = 0;
     MorzeCoder coder;
     IEncoder &encoder = (IEncoder&)coder;
-    ServerIPCSocket server;  
     std::vector<uint8_t> outbuf(1024, 0);
     std::string          use_string(1024, 0);
     std::string          morze_data(1024, 0);
+    ServerIPCSocket server(NULL, ServerOnClientConnect, ServerOnClientDisconnect);
     ServerContext ctx = 
     {
         .encoder=encoder, 
@@ -226,7 +219,8 @@ int server(int max_clients)
         .use_string=use_string,
         .morze_data=morze_data
     };     
-    InterruptibleConsoleReader consoleReader((void*)&ctx, ServerConsoleOnRead, SIGUSR1);
+    InterruptibleConsoleReader consoleReader((void*)&ctx, ServerConsoleOnRead);    
+    
 
     rc = server.Open();
     if (rc < 0){
@@ -240,15 +234,13 @@ int server(int max_clients)
         return rc;
     }
 
-    rc = server.Listen();
+    rc = server.Listen(max_clients);
     if (rc < 0){
         std::cerr << "LISTEN ERROR: " << gai_strerror(rc) << rc << std::endl;
         return rc;
     }
 
-    server.SetCallback(ServerOnClientConnect, ServerOnClientDisconnect);
-
-    rc = server.StartAcceptThread(max_clients);
+    rc = server.Start();
     if (rc < 0){
         std::cerr << "ACCEPT ERROR: " << gai_strerror(rc) << rc << std::endl;
         return rc;
@@ -256,12 +248,21 @@ int server(int max_clients)
 
     std::cout << "server: for quit send 'q' or 'quit'." << std::endl;
 
-    consoleReader.StartRead();
-    consoleReader.WaitTerminate();        
+    consoleReader.Attach(STDIN_FILENO);
+    rc = consoleReader.Start();
+    if (rc < 0){
+        std::cerr << "CONSOLE THREAD ERROR: " << strerror(rc) << rc << std::endl;
+        return rc;
+    } 
+    consoleReader.Join();  
+
+    std::cout << "stop server" << std::endl;   
     
+    server.Stop();
+    server.Join();
+    std::cout << "close server" << std::endl;   
     server.Close();
     return 0;
-
 }
 
 int main(int argc, char* argv[])

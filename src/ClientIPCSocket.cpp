@@ -1,6 +1,7 @@
 
 #include <sys/socket.h>
 #include <sys/types.h>
+#include <iostream>
 #include <sys/un.h>
 #include <stdio.h>
 #include <errno.h>
@@ -11,190 +12,120 @@
 #include <mutex>
 #include <unistd.h>
 #include <string>
+#include "BasicReadBufferSupervisor.hpp"
 #include "ClientIPCSocket.hpp"
 
-ClientIPCSocket::ClientIPCSocket()
-    : socket_fd(-1),
-    thread_interrupt_signal(SIGUSR1),
-    read_thread(-1)
+ClientIPCSocket::ClientIPCSocket(void *_ext_data, 
+    state_callback_t OnConnect, state_callback_t OnDisconnect, read_callback_t OnRead)       
+    :BasicReadBufferSupervisor(SIGUSR1)
 {
+    read_buf.clear();
+    read_buf.reserve(256);
+
+    std::lock_guard<std::mutex> locker(ext_data_and_callbaks_lock);
+    on_connect    = OnConnect;
+    on_disconnect = OnDisconnect;
+    on_read       = OnRead;
+    ext_data      = _ext_data;
 }
 
-ClientIPCSocket::ClientIPCSocket(int fd, struct sockaddr_un &addr)
-    : socket_fd(fd),
-    un_addr(addr),
-    thread_interrupt_signal(SIGUSR1),
-    read_thread(-1)
+ClientIPCSocket::ClientIPCSocket(int fd, void *_ext_data, 
+    state_callback_t OnConnect, state_callback_t OnDisconnect, read_callback_t OnRead)       
+    :BasicReadBufferSupervisor(SIGUSR1)
 {
+    read_buf.clear();
+    read_buf.reserve(256);
+    Attach(fd);
+
+    std::lock_guard<std::mutex> locker(ext_data_and_callbaks_lock);
+    on_connect    = OnConnect;
+    on_disconnect = OnDisconnect;
+    on_read       = OnRead;
+    ext_data      = _ext_data;
 }
 
 ClientIPCSocket::~ClientIPCSocket()
 {
+    std::cout << "~ClientIPCSocket 0"<< this << std::endl; 
     Close();
+    std::cout << "~ClientIPCSocket 1"<< this << std::endl;
 }
 
-int  ClientIPCSocket::Open()
+void ClientIPCSocket::SetExtData(void *_ext_data)
 {
-    if (socket_fd != -1){
-        return -EEXIST;
-    }
-
-    socket_fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (socket_fd == -1) {
-        return -errno;
-    }
-    return 0;
+    std::lock_guard<std::mutex> locker(ext_data_and_callbaks_lock);
+    ext_data      = _ext_data;
 }
 
-void ClientIPCSocket::SocketClose()
+void ClientIPCSocket::SetOnConnectCallback(state_callback_t OnConnect)
 {
-    if (socket_fd >= 0)
-    {
-        close(socket_fd);
-        if (on_disconnect)
-        {
-            on_disconnect(ext_data, *this);
-        }
-    }
-    socket_fd = -1;
+    std::lock_guard<std::mutex> locker(ext_data_and_callbaks_lock);
+    on_connect    = OnConnect;
 }
 
-int  ClientIPCSocket::WaitDataForReciveInfinity(int socket_fd, sigset_t sig_mask)
+void ClientIPCSocket::SetOnDisconnectCallback(state_callback_t OnDisconnect)
 {
-    fd_set readfds;
-       
-    FD_ZERO(&readfds);
-    FD_SET(socket_fd, &readfds);
-
-    int rc = pselect(socket_fd+1, &readfds, NULL, NULL, NULL, &sig_mask);
-    return rc;
+    std::lock_guard<std::mutex> locker(ext_data_and_callbaks_lock);
+    on_disconnect = OnDisconnect;
 }
 
-int  ClientIPCSocket::DataForReciveExists(int socket_fd)
+void ClientIPCSocket::SetOnReadCallback(read_callback_t OnRead)
 {
-    fd_set readfds;
-    struct timeval tv = {.tv_sec=0, .tv_usec=0};
-        
-    FD_ZERO(&readfds);
-    FD_SET(socket_fd, &readfds);
-
-    return select(socket_fd+1, &readfds, NULL, NULL, &tv);
-}
-
-/* exit on SocketClose | interrupt | error */
-int ClientIPCSocket::Recive(std::vector<uint8_t> &buf, sigset_t sig_mask)
-{
-    buf.clear();
-    int rc = 0;
-    /* wait infinity*/
-    int data_exists = WaitDataForReciveInfinity(socket_fd, sig_mask);
-    while (data_exists >= 0)
-    {
-        rc = recv(socket_fd, recive_buf, recive_buf_len, 0);
-        if (rc == -1) 
-        {
-            SocketClose();
-            return -errno;
-        } 
-        /* if data exists but rc == 0 then server killed */
-        if (rc == 0) 
-        {
-            SocketClose();
-            return buf.size();
-        }
-
-        try
-        {
-            buf.insert(buf.end(), recive_buf, recive_buf + rc);
-        } 
-        catch(const std::exception& e)
-        {
-            return -ENOMEM;
-        }
-        
-        /* is may be not all message */
-        if (rc == recive_buf_len) {
-            data_exists = DataForReciveExists(socket_fd);
-            continue;
-        }
-
-        /* all message recived */
-        break;
-    }
-    /* interrupt exit */
-    if (data_exists < 0){
-        return -errno;
-    }
-    return (int)buf.size();
-}
-
-void ClientIPCSocket::ClientIPCSocketSignalStopper(int signo) 
-{
-    (void)signo;
-}
-
-void *ClientIPCSocket::ReadThreadFunction()
-{
-    int rc = 0;
-    std::vector<uint8_t> buf;
-
-    sigset_t sigset, oldset;
-    sigemptyset(&sigset);
-    sigemptyset(&oldset);    
-    sigaddset(&sigset, thread_interrupt_signal );
-    signal(thread_interrupt_signal, ClientIPCSocketSignalStopper);
-    sigprocmask(SIG_BLOCK, &sigset, &oldset);  
-
-    {
-        std::lock_guard<std::mutex> locker(_lock);
-        if (on_connect){
-            on_connect(ext_data, *this);
-        }
-    }
-    
-    while (!stop_read)
-    {        
-        buf.clear();
-        rc = Recive(buf, oldset);
-        if (rc < 0){
-            break;
-        }
-        {
-            std::lock_guard<std::mutex> locker(_lock);
-            if (on_read){
-                on_read(ext_data, *this, buf);
-            }
-        }
-    }
-    SocketClose();
-    return NULL;
-}
-
-void *ClientIPCSocket::StaticReadThreadFunction(void *_ctx)
-{
-    ClientIPCSocket *ctx = (ClientIPCSocket *)_ctx;  
-    pthread_exit(ctx->ReadThreadFunction());
-    ctx->read_thread = (pthread_t)-1;
+    std::lock_guard<std::mutex> locker(ext_data_and_callbaks_lock);
+    on_read       = OnRead;
 }
 
 int ClientIPCSocket::Send(std::vector<uint8_t> &buf)
 {
-    if (socket_fd == -1){
+    if (fd == -1){
         return -EBADF;
     }
 
-    int rc = send(socket_fd, buf.data(), buf.size(), 0);
+    int rc = send(fd, buf.data(), buf.size(), 0);
     if (rc == -1) 
-    {
-        SocketClose();
+    {   
+        Close();
         return -errno;
     }  
     return rc;
 }
 
+int  ClientIPCSocket::Open()
+{
+    if (fd != -1){
+        return -EEXIST;
+    }
+
+    fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd == -1) {
+        return -errno;
+    }
+    return 0;
+}
+
+void ClientIPCSocket::Close()
+{
+    if (fd >= 0){
+        close(fd);
+    }
+    fd = -1;
+    std::cout << " Close 0"<< this << std::endl;
+    if (IsRunning())
+    {
+        std::cout << " Close is running "<< this << std::endl;
+        Stop();
+        std::cout << " Close after stop"<< this << std::endl;
+        Join();
+        std::cout << " Close after join"<< this << std::endl;
+    }
+
+
+}
+
 int  ClientIPCSocket::Connect(const std::string sock_path)
 {
-    if (socket_fd == -1){
+    struct sockaddr_un un_addr;
+    if (fd == -1){
         return -EBADF;
     }
 
@@ -207,53 +138,66 @@ int  ClientIPCSocket::Connect(const std::string sock_path)
     strcpy(un_addr.sun_path, sock_path.c_str());
     size_t len = sizeof(un_addr.sun_family) + sock_path.length(); 
 
-    if(connect(socket_fd, (struct sockaddr *) &un_addr, len) == -1){
-        SocketClose();
+    if(connect(fd, (struct sockaddr *) &un_addr, len) == -1){
+        Close();
         return -errno;
     }
     return 0;
 }
 
-int  ClientIPCSocket::StartReading()
+int ClientIPCSocket::BeforeThreadLoop()
 {
-    if (socket_fd == -1){
-        return -EBADF;
+    std::lock_guard<std::mutex> locker(ext_data_and_callbaks_lock);
+    if (on_connect){
+        on_connect(ext_data, *this);
     }
+    return 0;
+}
 
-    if (read_thread != (pthread_t)-1){
-        return -EEXIST;
+int ClientIPCSocket::ExistDataInReadBuffer()
+{
+    std::cout << "ExistDataInReadBuffer enter " << std::endl;
+    int rc;
+    do 
+    {
+        rc = recv(fd, recive_buf, recive_buf_len, 0);
+        /* if data exists but rc == 0 then server killed */
+        if (rc <= 0){
+            return -1;
+        } 
+
+        try
+        {
+            read_buf.insert(read_buf.end(), recive_buf, recive_buf + rc);
+        } 
+        catch(const std::exception& e)
+        {
+            return -ENOMEM;
+        }
+        
+        if ((size_t)rc < recive_buf_len) 
+        {
+            std::lock_guard<std::mutex> locker(ext_data_and_callbaks_lock);
+            if (on_read){
+                on_read(ext_data, *this, read_buf);
+            }
+            read_buf.clear();
+            break;
+        }
+
+        std::cout << "ExistDataInReadBuffer iter " << std::endl;
     }
-
-    stop_read = false;
-    return pthread_create(&read_thread, NULL, &StaticReadThreadFunction, this);
+    while ((stop_thread == false) && (DataInReadBufExists() >= 0));
+    std::cout << "ExistDataInReadBuffer exit " << std::endl;
+    return 0;
 }
 
-void ClientIPCSocket::Close()
+void ClientIPCSocket::AfterThreadLoop()
 {
-    /* only stop thread disconnect in thread */
-    stop_read = true;
-
-    if (read_thread != (pthread_t)-1){        
-        pthread_kill(read_thread, SIGUSR1);
-        pthread_join(read_thread, NULL); 
-        read_thread = -1;
+    std::cout << "AfterThreadLoop " << std::endl;
+    std::lock_guard<std::mutex> locker(ext_data_and_callbaks_lock);
+    if (on_disconnect){
+        on_disconnect(ext_data, *this);
     }
 }
-
-void ClientIPCSocket::SetExtData(void *_ext_data)
-{
-    std::lock_guard<std::mutex> locker(_lock);
-
-    ext_data = _ext_data;
-}
-
-void ClientIPCSocket::SetCallbacs(state_callback_t OnConnect, state_callback_t OnDisconnect, read_callback_t OnRead)
-{
-    std::lock_guard<std::mutex> locker(_lock);
-
-    on_connect    = OnConnect;
-    on_disconnect = OnDisconnect;
-    on_read       = OnRead;
-}
-
 
